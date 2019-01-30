@@ -1,0 +1,225 @@
+---
+title: "Weight Lifting Predictive Model"
+author: "Samantha_Baron"
+date: "January 26, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Instructions, include=FALSE}
+#Assignment
+#The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing 
+#how you built your model
+#how you used cross validation
+#what you think the expected out of sample error is
+#why you made the choices you did
+
+#Submission
+#a link to a Github repo with your R markdown and compiled HTML file
+# < 2000 words
+# number of figures to be less than 5
+#It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online
+
+#About data
+#see more data here: http://groupware.les.inf.puc-rio.br/har
+#4 accelerometers on the belt, forearm, arm, and dumbell
+#6 participants
+#5 methods (classes)
+#10 reps of each class
+
+#ref other people's reports:https://rpubs.com/d_elia/pracmaclear
+
+```
+#Executive Summary
+
+An experiement was designed where subjects wore sensors and did bicep curls in 5 different manners, one using correct form and the others being incorrect form. The idea was to see if the quality of the exercise could be assessed without the need for a live trainer to be present.
+
+Data was taken from all of the sensors and other variables were derived fromthe direct sensor data. This report will attempt to determine a prediction model such that one could classify in which of the 5 manners the exercise was done from the sensor data and thereby provide feedback to the user about the quality of their exercising.
+
+
+```{r library, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(xtable)
+library(reshape2)
+library(knitr)
+library(tinytex)
+library(kableExtra)
+library(datasets)
+library(GGally)
+library(grid)
+library(AppliedPredictiveModeling)
+library(caret)
+library(ElemStatLearn)
+library(pgmm)
+library(rpart)
+library(gbm)
+library(lubridate)
+library(forecast)
+library(e1071)
+library(randomForest)
+library(parallel)
+library(doParallel)
+```
+```{r setwd, include = FALSE}
+setwd("C:/Users/baron samantha/Desktop/DataScience/8PML")
+```
+```{r data, cache=TRUE}
+#Data URLs - for Reference
+training.url    <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+test.cases.url  <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+
+#read downloaded data from working directory
+train <- read.csv("./pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+test <- read.csv("./pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+#Preprocessing the data
+The data first needed to be cleaned before a model could be buit on it. The steps below outline how this was accomplished:
+1. Remove all the columns where the % of NA values is greater than 0
+2. Remove the demographic fields like user name and the fields that give information about how the test was performed like window and time _stamps. These are columns 1:7
+3. Do the same processing on the training and testing set
+4. Partition the training set to get a validation set to test on for purposes of determining which model is the most accurate.
+
+```{r clean}
+#Useful class forum discussion on cleaning/ pruning variables
+
+na_count <- data.frame(x = colSums(is.na(train))/(nrow(train)))
+na_remove <- which(na_count$x>0)
+c.to.remove <- c(1:7, na_remove)
+train <- train[,-c.to.remove] #with non-variable data removed
+test <- test[,-c.to.remove]
+
+#create validation set from training set
+inTrain <- createDataPartition(y = train$classe, p=0.75, list=FALSE)
+training <- train[inTrain,]
+validation <- train[-inTrain,]
+
+```
+
+#Model 1 - Random Forest
+The first model tested will use the random forest technique.
+
+```{r RFmodel, cache=TRUE}
+
+set.seed(777)
+
+#Configure parallel processing (per article: #https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#create model
+fitControlRF <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+
+modFitRF <- train(classe ~ ., method="rf", data = training, trControl=fitControlRF) 
+
+#De-register parallel processing cluster
+stopCluster(cluster)
+registerDoSEQ()
+
+#predict on validation set
+predModRF <- predict(modFitRF, validation[,-53])
+RF <- confusionMatrix(validation$classe, predModRF)
+
+```
+
+#Model 2 - Boosting
+The second model tested will use the boosting technique.
+
+```{r GBMmodel, cache=TRUE}
+
+set.seed(777)
+
+#Configure parallel processing
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#create model
+fitControlGBM <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+
+modFitGBM <- train(classe ~ ., method="gbm", data = training, trControl=fitControlGBM, verbose = FALSE) 
+
+#De-register parallel processing cluster
+stopCluster(cluster)
+registerDoSEQ()
+
+#predict on validation set
+predModGBM <- predict(modFitGBM, validation[,-53])
+GBM <- confusionMatrix(validation$classe, predModGBM)
+```
+
+#Model 3 - Linear Discriminant Analysis
+The third model tested will use the linear discriminant analysis technique.
+
+```{r LDAmodel, cache=TRUE}
+set.seed(777)
+
+#Configure parallel processing
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#create model
+fitControlLDA <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+
+modFitLDA <- train(classe ~ ., method="lda", data = training, trControl=fitControlLDA) 
+
+#De-register parallel processing cluster
+stopCluster(cluster)
+registerDoSEQ()
+
+#predict on validation set
+predModLDA <- predict(modFitLDA, validation[,-53])
+LDA <- confusionMatrix(validation$classe, predModLDA)
+
+```
+
+#Results and Analysis
+As seen in Table 1, which shows the accuracy and the out of sample error for the three modeling methods tried, random forest appears to have the best predictive results with the lowest out of sample error.
+
+Out of sample error was calculated for the validation set as [1-accuracy].
+
+```{r results}
+Acc <- rbind("LDA" = LDA$overall["Accuracy"], "GBM" = GBM$overall["Accuracy"], "RF" = RF$overall["Accuracy"])
+
+OutSamError <- 100*(1-Acc)
+colnames(OutSamError) <- c("OutSampleError")
+
+Results <- round(cbind(100*Acc, OutSamError), 2)
+
+kable(Results, caption = "Table 1")
+```
+
+#Data Exploration
+It is interesting to note that the three different modeling methods each chose slightly different variables to be the most important, although each weighted magnet_dumbell_z and y and the pitch_forearm heavily.
+
+```{r DataExploration}
+
+varLDA <- as.matrix(varImp(modFitLDA)$importance)
+varGBM <- as.matrix(varImp(modFitGBM)$importance)
+varRF <- as.matrix(varImp(modFitRF)$importance)
+
+varimp <- varimp <- merge(varRF, varGBM, by = "row.names", all = TRUE)
+
+rownames(varimp) <- varimp[,1]
+varimp <- varimp[,-1]
+varimp <- merge(varimp, varLDA, by="row.names", all=TRUE)
+colnames(varimp) <- c("variable", "RF", "GBM", "LDA-A", "LDA-B","LDA-C","LDA-D", "LDA-E")
+varimp <- tbl_df(varimp)
+varimp <- arrange(varimp, desc(RF), desc(GBM))
+
+varimp[,2:8] <- round(varimp[,2:8], 1)
+kable(varimp, caption = "Table 2")
+```
+
+#Results of applying the model to the test data
+The random forest model was applied to the test data. The results can be found in Table 3.
+
+```{r FinalValues}
+PredTestRF <- predict(modFitRF, test)
+scenario <- c(1:20)
+TestResults <- cbind(scenario, results = as.character(PredTestRF))
+kable(TestResults, caption = "Table 3")
+```
